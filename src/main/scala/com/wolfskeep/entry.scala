@@ -15,7 +15,7 @@ object Entry {
   }
 
   def process(prob: String, name: Option[String] = None) {
-    val out = name.map(n => new java.io.PrintStream(n.replace("problems/", "solutions/").replace(".desc", ".sol"))).getOrElse(System.out)
+    val out = name.map(n => new java.io.PrintStream(n.replace(".desc", ".sol"))).getOrElse(System.out)
     out.println(ProblemParser(prob))
   }
 }
