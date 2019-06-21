@@ -32,7 +32,7 @@ object ProblemParser extends RegexParsers {
   def num: Parser[Int] = """\d+""".r ^^ { _.toInt }
   def point: Parser[Point] = ("(" ~> num <~ ",") ~ num <~ ")" ^^ { case x ~ y => Point(x, y) }
   def map = repsep(point, ",")
-  def code: Parser[Char] = """B|F|L|X""".r ^^ { _.head }
+  def code: Parser[Char] = """B|F|L|X|R""".r ^^ { _.head }
   def booster = code ~ point ^^ { case c ~ p => Booster(c, p) }
   def obstacles = repsep(map, ";")
   def boosters = repsep(booster, ";")
