@@ -74,7 +74,10 @@ case class Path(state: State, from: Option[(Action, Path)]) {
       case None => this
       case Some(b) => Path(state.copy(bot = b.expire(time + 1), mine = mine.updated(pos, 't')), Some(action, this))
     }
-    case Shift => 
+    case Shift(x, y) =>
+      val p2 = mine.toPos(Point(x, y))
+      if (p2 == pos || mine.cells(p2) != 't') this
+      else Path(state.copy(bot = bot.expire(time + 1), pos = p2, mine = mine.paint(p2, bot)), Some(action, this))
   }
 }
 
