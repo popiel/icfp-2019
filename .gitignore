@@ -1,0 +1,11 @@
+/lib
+/project/target
+/project/project/target
+/target
+*.swp
+*.swo
+token
+*.out
+key
+/log
+/project/build.properties
