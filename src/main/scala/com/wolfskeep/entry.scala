@@ -20,7 +20,7 @@ object Entry {
     val problem = ProblemParser(prob)
     val mine = Mine(problem)
     val bot = Bot()
-    val pos = mine.toOffset(problem.start)
+    val pos = mine.toPos(problem.start)
     println(mine)
   }
 }
@@ -74,6 +74,7 @@ case class Path(state: State, from: Option[(Action, Path)]) {
       case None => this
       case Some(b) => Path(state.copy(bot = b.expire(time + 1), mine = mine.updated(pos, 't')), Some(action, this))
     }
+    case Shift => 
   }
 }
 
@@ -102,8 +103,9 @@ ${cells.grouped(width).map(_.mkString).toVector.reverse.mkString("\n")}
 ($startX,$startY)"""
   }
 
-  def toOffset(p: Point) = (p.y - startY) * width + p.x - startX
-  def paint(where: Point, bot: Bot): Mine = paint(toOffset(where), bot)
+  def toPos(p: Point) = (p.y - startY) * width + p.x - startX
+  def toOffset(p: Point) = (p.y) * width + p.x
+  def paint(where: Point, bot: Bot): Mine = paint(toPos(where), bot)
   def paint(where: Int, bot: Bot): Mine = {
     copy(cells = (where +: bot.arms.map(toOffset(_) + where)).filter(o => o >= 0 && o < cells.length).foldLeft(cells)((c, o) =>
       c.updated(o, c(o) match {
