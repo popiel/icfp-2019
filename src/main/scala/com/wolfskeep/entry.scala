@@ -21,7 +21,24 @@ object Entry {
     val mine = Mine(problem)
     val bot = Bot()
     val pos = mine.toPos(problem.start)
+    val state = State(pos, bot, mine.paint(pos, bot))
+
     println(mine)
+    println(problem.start)
+
+    val open = scala.collection.mutable.Stack(Path(state, None))
+    var closed = Set(state)
+    while (open.nonEmpty) {
+      val work = open.pop()
+      if (work.finished) {
+        out.println(work)
+        open.clear()
+      } else {
+        val next = work.children.filter(p => !closed(p.state))
+        closed ++= next.map(_.state)
+        open.pushAll(next)
+      }
+    }
   }
 }
 
@@ -45,15 +62,21 @@ case class State(pos: Int, bot: Bot, mine: Mine) {
 }
 
 case class Path(state: State, from: Option[(Action, Path)]) {
-  lazy val repr: String = from match {
-    case Some((a, p)) => p.toString + a.toString
-    case None => ""
+  lazy val repr: String = {
+    val sb = new StringBuilder()
+    var p = this
+    while (p.from != None) {
+      sb.append(p.from.get._1.toString.reverse)
+      p = p.from.get._2
+    }
+    sb.toString.reverse
   }
   override def toString = repr
 
   def bot = state.bot
   def pos = state.pos
   def mine = state.mine
+  def finished = mine.finished
   lazy val time: Int = from.map(_._2.time + 1).getOrElse(0)
 
   def apply(action: Action): Path = action match {
@@ -79,16 +102,40 @@ case class Path(state: State, from: Option[(Action, Path)]) {
       if (p2 == pos || mine.cells(p2) != 't') this
       else Path(state.copy(bot = bot.expire(time + 1), pos = p2, mine = mine.paint(p2, bot)), Some(action, this))
   }
+
+  def legal(action: Action) = action match {
+    case Wait => bot.onTimers
+    case RotateCW  => true
+    case RotateCCW => true
+    case GoFast => bot.inventory.getOrElse('F', 0) > 0
+    case StartDrilling => bot.inventory.getOrElse('L', 0) > 0
+    case AttachArm(x, y) => bot.inventory.getOrElse('B', 0) > 0
+    case x: Move =>
+      val offset = mine.toOffset(x.offset)
+      val p2 = pos + offset
+      p2 >= 0 && p2 < mine.cells.length && mine(p2) != '!' && (bot.drillingUntil > 0 || mine(p2) != '#')
+    case Reset => bot.inventory.getOrElse('R', 0) > 0 && mine(pos) == '*'
+    case Shift(x, y) => mine(mine.toPos(Point(x, y))) == 't'
+  }
+
+  def children = {
+    val moves = Seq[Move](MoveUp, MoveDown, MoveLeft, MoveRight).filter(legal).sortBy { a => 
+      val offset = mine.toOffset(a.offset)
+      val p2 = pos + offset
+      mine.routeToUnpainted(p2)
+    }
+    moves.map(apply)
+  }
 }
 
 sealed trait Action
-sealed trait Move {
+sealed trait Move extends Action {
   def offset: Point
 }
-object MoveUp              extends Move with Action { override def toString = "W"; def offset = Point( 0,  1) }
-object MoveDown            extends Move with Action { override def toString = "S"; def offset = Point( 0, -1) }
-object MoveRight           extends Move with Action { override def toString = "D"; def offset = Point( 1,  0) }
-object MoveLeft            extends Move with Action { override def toString = "A"; def offset = Point(-1,  0) }
+object MoveUp                        extends Move   { override def toString = "W"; def offset = Point( 0,  1) }
+object MoveDown                      extends Move   { override def toString = "S"; def offset = Point( 0, -1) }
+object MoveRight                     extends Move   { override def toString = "D"; def offset = Point( 1,  0) }
+object MoveLeft                      extends Move   { override def toString = "A"; def offset = Point(-1,  0) }
 object Wait                          extends Action { override def toString = "Z" }
 object RotateCW                      extends Action { override def toString = "E" }
 object RotateCCW                     extends Action { override def toString = "Q" }
@@ -110,17 +157,50 @@ ${cells.grouped(width).map(_.mkString).toVector.reverse.mkString("\n")}
   def toOffset(p: Point) = (p.y) * width + p.x
   def paint(where: Point, bot: Bot): Mine = paint(toPos(where), bot)
   def paint(where: Int, bot: Bot): Mine = {
-    copy(cells = (where +: bot.arms.map(toOffset(_) + where)).filter(o => o >= 0 && o < cells.length).foldLeft(cells)((c, o) =>
-      c.updated(o, c(o) match {
-        case '.' => '*'
-        case x => x.toLower
-      })
-    ))
+    val reachable = where +: bot.arms.map(toOffset(_) + where).filter(o => o >= 0 && o < cells.length)
+    if (reachable.exists(unpainted))
+      copy(cells = reachable.foldLeft(cells)((c, o) =>
+        c.updated(o, c(o) match {
+          case '.' => '*'
+          case x => x.toLower
+        })
+      ))
+    else this
   }
 
   def finished = !cells.exists(c => c == '.' || c.isUpper)
 
+  def apply(pos: Int) = if (pos < 0 || pos >= cells.length) '!' else cells(pos)
+  def unpainted(pos: Int) = {
+    val d = apply(pos)
+    d == '.' || d.isUpper
+  }
+
   def updated(pos: Int, c: Char) = copy(cells = cells.updated(pos, c))
+
+  private[this] def findRoutes(): Array[Int] = {
+    val cost = Array.fill(cells.length)(Int.MaxValue)
+    for (p <- 0 until cells.length) {
+      if (unpainted(p)) cost(p) = 0
+    }
+    var progressing = true
+    while (progressing) {
+      progressing = false
+      for {
+        p1 <- 0 until cells.length
+        o <- Seq(-width, -1, 1, width)
+        p2 = p1 + o
+        if p2 >= 0 && p2 < cells.length
+        if cost(p1) > cost(p2) + 1
+      } {
+        cost(p1) = cost(p2) + 1
+        progressing = true
+      }
+    }
+    cost
+  }
+
+  lazy val routeToUnpainted = findRoutes()
 }
 object Mine {
   def isVert(p: Seq[Point]) = p(0).x == p(1).x
