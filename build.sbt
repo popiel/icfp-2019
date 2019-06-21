@@ -4,6 +4,8 @@ scalaVersion := "2.13.0"
 
 // logLevel in Global := Level.Debug
 
+libraryDependencies += "org.scala-lang.modules" %% "scala-parser-combinators" % "1.1.2"
+
 libraryDependencies += "org.scalactic"  %% "scalactic"       % "3.0.8"
 libraryDependencies += "org.scalatest"  %% "scalatest"       % "3.0.8" % "test"
 libraryDependencies += "org.slf4j"      %  "slf4j-api"       % "1.7.26"
