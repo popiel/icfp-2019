@@ -38,7 +38,7 @@ object Mine {
     val minY = problem.border.map(_.y).min
     val maxX = problem.border.map(_.x).max
     val maxY = problem.border.map(_.y).max
-    val segs = ((problem.border.last +: problem.border sliding 2) ++ (problem.obstacles.filter(_.nonEmpty).flatMap(o => o.last +: o sliding 2)))
+    val segs = ((problem.border.last +: problem.border sliding 2) ++ (problem.obstacles.flatMap(o => o.last +: o sliding 2)))
       .filter(isVert)
       .map(s => (s(0).x, s(0).y, s(1).y))
       .toList.sorted
@@ -71,7 +71,7 @@ case class Problem(border: Seq[Point], start: Point, obstacles: Seq[Seq[Point]],
 object ProblemParser extends RegexParsers {
   def num: Parser[Int] = """\d+""".r ^^ { _.toInt }
   def point: Parser[Point] = ("(" ~> num <~ ",") ~ num <~ ")" ^^ { case x ~ y => Point(x, y) }
-  def map = repsep(point, ",")
+  def map = rep1sep(point, ",")
   def code: Parser[Char] = """B|F|L|X|R""".r ^^ { _.head }
   def booster = code ~ point ^^ { case c ~ p => Booster(c, p) }
   def obstacles = repsep(map, ";")
