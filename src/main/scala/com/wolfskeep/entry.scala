@@ -25,7 +25,8 @@ object Entry {
 
 case class Mine(startX: Int, startY: Int, width: Int, height: Int, cells: IndexedSeq[Char]) {
   override def toString = {
-    s"""($startX,${startY + height})
+    val o = s"(${startX + width},${startY + height})"
+    s"""${" "*(width - o.length max 0)}$o
 ${cells.grouped(width).map(_.mkString).toVector.reverse.mkString("\n")}
 ($startX,$startY)"""
   }
