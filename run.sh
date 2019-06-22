@@ -1,6 +1,6 @@
 #!/bin/bash
 
-problems=$(find problems -name prob-${1}.desc -print)
+problems=$(find problems -name prob-${1}.desc -print | sort)
 sbt "run $problems"
 for p in $problems; do
   sol=$(echo $p | sed 's/problems.//;s/\.desc/.sol/')
