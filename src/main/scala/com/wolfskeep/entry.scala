@@ -13,7 +13,6 @@ object Entry {
         name <- args
         task <- scala.io.Source.fromFile(name).getLines
       } {
-        println(name)
         process(task, Some(name))
       }
     }
