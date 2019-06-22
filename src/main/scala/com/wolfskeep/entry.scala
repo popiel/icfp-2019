@@ -23,7 +23,7 @@ object Entry {
     val pos = mine.toPos(problem.start)
     val state = State(pos, bot, mine.paint(pos, bot))
 
-    println(mine)
+    println(state.mine)
     println(problem.start)
 
     val open = scala.collection.mutable.Stack(Path(state, None))
@@ -32,9 +32,11 @@ object Entry {
       val work = open.pop()
       if (work.finished) {
         out.println(work)
+        println(work.mine)
         open.clear()
       } else {
-        val next = work.children.filter(p => !closed(p.state))
+        // val next = work.children.filter(p => !closed(p.state))
+        val next = Seq(work(work.mine.moveToUnpainted(work.pos)))
         closed ++= next.map(_.state)
         open.pushAll(next)
       }
@@ -118,13 +120,26 @@ case class Path(state: State, from: Option[(Action, Path)]) {
     case Shift(x, y) => mine(mine.toPos(Point(x, y))) == 't'
   }
 
+  val strongSort = true
   def children = {
-    val moves = Seq[Move](MoveUp, MoveDown, MoveLeft, MoveRight).filter(legal).sortBy { a => 
-      val offset = mine.toOffset(a.offset)
-      val p2 = pos + offset
-      mine.routeToUnpainted(p2)
+    val moves = Seq[Move](MoveUp, MoveDown, MoveLeft, MoveRight).filter(legal)
+    if (!strongSort) {
+      val m2 = moves.map(apply).sortBy(_.mine eq mine)
+      if (m2.exists(_.mine ne mine)) m2
+      else m2.sortBy {
+        case Path(_, Some((a: Move, _))) => 
+          val offset = mine.toOffset(a.offset)
+          val p2 = pos + offset
+          mine.routeToUnpainted(p2)
+        case _ => Int.MaxValue
+      }
+    } else {
+      moves.sortBy { a =>
+        val offset = mine.toOffset(a.offset)
+        val p2 = pos + offset
+        mine.routeToUnpainted(p2)
+      }.map(apply)
     }
-    moves.map(apply)
   }
 }
 
@@ -175,6 +190,10 @@ ${cells.grouped(width).map(_.mkString).toVector.reverse.mkString("\n")}
     val d = apply(pos)
     d == '.' || d.isUpper
   }
+  def canMoveTo(pos: Int) = {
+    val d = apply(pos)
+    d != '#' && d != '!'
+  }
 
   def updated(pos: Int, c: Char) = copy(cells = cells.updated(pos, c))
 
@@ -187,7 +206,8 @@ ${cells.grouped(width).map(_.mkString).toVector.reverse.mkString("\n")}
     while (progressing) {
       progressing = false
       for {
-        p1 <- 0 until cells.length
+        p1 <- (0 until cells.length) ++ (cells.length - 1 to 0 by -1)
+        if canMoveTo(p1)
         o <- Seq(-width, -1, 1, width)
         p2 = p1 + o
         if p2 >= 0 && p2 < cells.length
@@ -201,6 +221,38 @@ ${cells.grouped(width).map(_.mkString).toVector.reverse.mkString("\n")}
   }
 
   lazy val routeToUnpainted = findRoutes()
+
+  def moveToUnpainted(pos: Int): Action = {
+    if (unpainted(pos-1))     return MoveLeft
+    if (unpainted(pos+width)) return MoveUp
+    if (unpainted(pos+1))     return MoveRight
+    if (unpainted(pos-width)) return MoveDown
+
+    val cost = scala.collection.mutable.Map[Int, Int]().withDefaultValue(Int.MaxValue)
+    val open = scala.collection.mutable.Queue[Int]()
+    cost(pos) = 0;
+    for { (o, k) <- Seq(-1, width, 1, -width).zipWithIndex } {
+      val p = pos + o
+      if (canMoveTo(p)) {
+        cost(p) = 4 + k
+        open.enqueue(p)
+      }
+    }
+    while (open.nonEmpty) {
+      val p = open.dequeue()
+      for (o <- Seq(-width, -1, 1, width)) {
+        val p2 = p + o
+        if (unpainted(p2)) {
+          return Seq(MoveLeft, MoveUp, MoveRight, MoveDown)(cost(p) & 3)
+        }
+        if (canMoveTo(p2) && cost(p2) > cost(p) + 4) {
+          cost(p2) = cost(p) + 4
+          open.enqueue(p2)
+        }
+      }
+    }
+    return Wait
+  }
 }
 object Mine {
   def isVert(p: Seq[Point]) = p(0).x == p(1).x
