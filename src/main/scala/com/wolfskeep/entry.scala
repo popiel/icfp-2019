@@ -1,7 +1,8 @@
 package com.wolfskeep
 
-import scala.util.parsing.combinator._
 import scala.collection.immutable.Vector
+import scala.util.parsing.combinator._
+import scala.util.Try
 
 object Entry {
   def main(args: Array[String]): Unit = {
@@ -19,23 +20,41 @@ object Entry {
   }
 
   def process(prob: String, name: Option[String] = None) {
-    val out = name.map(n => new java.io.PrintStream(n.replace(".desc", ".sol"))).getOrElse(System.out)
     val problem = ProblemParser(prob)
     val mine = Mine(problem)
     val bot = Bot()
     val pos = mine.toPos(problem.start)
     val state = State(pos, bot, mine.paint(pos, bot))
 
-    println(state.mine)
-    println(problem.start)
+    // println(state.mine)
+    println(s"${name.getOrElse("")} - (${mine.width},${mine.height}) - ${problem.start}")
 
     val open = scala.collection.mutable.Stack(Path(state, None))
     var closed = Set(state)
     while (open.nonEmpty) {
       val work = open.pop()
       if (work.finished) {
+        val out = name.map(n => new java.io.PrintStream(n.replace(".desc", ".sol"))).getOrElse(System.out)
         out.println(work)
-        println(work.mine)
+        out.close()
+        // println(work.mine)
+        name match {
+          case Some(n) =>
+            val sName = n.replace(".desc", ".sol").replace("problems", "solutions")
+            val best = Try(scala.io.Source.fromFile(sName).getLines.mkString).getOrElse("").filter(_.isLetter).length
+            val cost = work.toString.filter(_.isLetter).length
+            if (best == 0 || best > cost) {
+              println(s"$n: Improving from $best to $cost")
+              Try {
+                val f = new java.io.PrintStream(sName);
+                f.println(work)
+                f.close()
+              }
+            } else {
+              println(s"$n: Prior $best remains better than $cost")
+            }
+          case _ =>
+        }
         open.clear()
       } else {
         val next = work.children.filter(p => !closed(p.state))
@@ -152,6 +171,7 @@ case class Path(state: State, from: Option[(Action, Path)]) {
         m <- Seq(MoveLeft, MoveUp, MoveRight, MoveDown)
         if mine.grabbable(pos + mine.toOffset(m.offset))
       } yield m) ++
+      (if (bot.inventory.getOrElse('B', 0) > 0) Seq(AttachArm(bot)) else Seq.empty[Action]) ++
       (if (bot.fastUntil == 0 && bot.inventory.getOrElse('F', 0) > 0) Seq(GoFast) else Seq.empty[Action]) ++
       Seq(mine.moveToUnpainted(pos))
     ).distinct.map(apply).reverse
@@ -175,6 +195,14 @@ object StartDrilling                 extends Action { override def toString = "L
 object Reset                         extends Action { override def toString = "R" }
 case class Shift(x: Int, y: Int)     extends Action { override def toString = s"T($x,$y)" }
 
+object AttachArm {
+  def apply(bot: Bot): AttachArm = {
+    val u = bot.arms.find(a => (a.x + a.y).abs == 1).get
+    val l = bot.arms.length - 1
+    AttachArm(u.x * l, u.y * l)
+  }
+}
+
 case class Mine(startX: Int, startY: Int, width: Int, height: Int, cells: IndexedSeq[Char]) {
   override def toString = {
     val o = s"(${startX + width},${startY + height})"
@@ -187,7 +215,7 @@ ${cells.grouped(width).map(_.mkString).toVector.reverse.mkString("\n")}
   def toOffset(p: Point) = (p.y) * width + p.x
   def paint(where: Point, bot: Bot): Mine = paint(toPos(where), bot)
   def paint(where: Int, bot: Bot): Mine = {
-    val reachable = where +: bot.arms.map(toOffset(_) + where).filter(o => o >= 0 && o < cells.length)
+    val reachable = where +: bot.arms.map(toOffset(_) + where).takeWhile(canMoveTo)
     if (reachable.exists(unpainted))
       copy(cells = reachable.foldLeft(cells)((c, o) =>
         c.updated(o, c(o) match {
@@ -302,7 +330,7 @@ object Mine {
   }
 }
 
-case class Bot(arms: Seq[Point] = Seq(Point(1, 1), Point(1, 0), Point(1, -1)), fastUntil: Int = 0, drillingUntil: Int = 0, inventory: Map[Char, Int] = Map.empty[Char, Int]) {
+case class Bot(arms: Seq[Point] = Seq(Point(1, 1), Point(1, -1), Point(1, 0)), fastUntil: Int = 0, drillingUntil: Int = 0, inventory: Map[Char, Int] = Map.empty[Char, Int]) {
   def rotateCW = copy(arms = arms.map(_.rotateCW))
   def rotateCCW = copy(arms = arms.map(_.rotateCCW))
   def onTimers = fastUntil > 0 || drillingUntil > 0
@@ -335,7 +363,7 @@ case class Bot(arms: Seq[Point] = Seq(Point(1, 1), Point(1, 0), Point(1, -1)), f
       case Some(inv) =>
         if ((Point(0, 0) +: arms).exists(p => (p.x == x || p.y == y) && (p.x - x + p.y - y).abs == 1) &&
             !arms.contains(Point(x, y)))
-          copy(arms = Point(x, y) +: arms, inventory = inv)
+          copy(arms = arms :+ Point(x, y), inventory = inv)
         else
           this
     }
