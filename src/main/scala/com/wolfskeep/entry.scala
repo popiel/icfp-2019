@@ -11,7 +11,10 @@ object Entry {
       for {
         name <- args
         task <- scala.io.Source.fromFile(name).getLines
-      } { process(task, Some(name)) }
+      } {
+        println(name)
+        process(task, Some(name))
+      }
     }
   }
 
@@ -35,8 +38,8 @@ object Entry {
         println(work.mine)
         open.clear()
       } else {
-        // val next = work.children.filter(p => !closed(p.state))
-        val next = Seq(work(work.mine.moveToUnpainted(work.pos)))
+        val next = work.children.filter(p => !closed(p.state))
+        // val next = Seq(work(work.mine.moveToUnpainted(work.pos)))
         closed ++= next.map(_.state)
         open.pushAll(next)
       }
@@ -52,7 +55,7 @@ case class State(pos: Int, bot: Bot, mine: Mine) {
 
   def move(offset: Int) = {
     val p1 = pos + offset
-    val d = mine.cells.applyOrElse(p1, (_: Int) => '!').toUpper
+    val d = mine(p1).toUpper
     if (d == '!' || (d == '#' && bot.drillingUntil == 0)) this
     else {
       val isGrabbable = d.isLetter && d != 'X' && d != 'T'
@@ -121,6 +124,7 @@ case class Path(state: State, from: Option[(Action, Path)]) {
   }
 
   val strongSort = true
+/*
   def children = {
     val moves = Seq[Move](MoveUp, MoveDown, MoveLeft, MoveRight).filter(legal)
     if (!strongSort) {
@@ -140,6 +144,17 @@ case class Path(state: State, from: Option[(Action, Path)]) {
         mine.routeToUnpainted(p2)
       }.map(apply)
     }
+  }
+*/
+  def children: Seq[Path] = {
+    (
+      (for {
+        m <- Seq(MoveLeft, MoveUp, MoveRight, MoveDown)
+        if mine.grabbable(pos + mine.toOffset(m.offset))
+      } yield m) ++
+      (if (bot.fastUntil == 0 && bot.inventory.getOrElse('F', 0) > 0) Seq(GoFast) else Seq.empty[Action]) ++
+      Seq(mine.moveToUnpainted(pos))
+    ).distinct.map(apply).reverse
   }
 }
 
@@ -165,7 +180,7 @@ case class Mine(startX: Int, startY: Int, width: Int, height: Int, cells: Indexe
     val o = s"(${startX + width},${startY + height})"
     s"""${" "*(width - o.length max 0)}$o
 ${cells.grouped(width).map(_.mkString).toVector.reverse.mkString("\n")}
-($startX,$startY)"""
+($startX,$startY) - (${startX + width},${startY + height})"""
   }
 
   def toPos(p: Point) = (p.y - startY) * width + p.x - startX
@@ -193,6 +208,10 @@ ${cells.grouped(width).map(_.mkString).toVector.reverse.mkString("\n")}
   def canMoveTo(pos: Int) = {
     val d = apply(pos)
     d != '#' && d != '!'
+  }
+  def grabbable(pos: Int) = {
+    val d = apply(pos).toUpper
+    d.isLetter && d != 'X' && d != 'T'
   }
 
   def updated(pos: Int, c: Char) = copy(cells = cells.updated(pos, c))
@@ -301,13 +320,13 @@ case class Bot(arms: Seq[Point] = Seq(Point(1, 1), Point(1, 0), Point(1, -1)), f
   def startDrilling(now: Int) =
     use('L') match {
       case None => this
-      case Some(inv) => copy(drillingUntil = now + 30, inventory = inv).expire(now + 1)
+      case Some(inv) => copy(drillingUntil = now + 31, inventory = inv).expire(now + 1)
     }
 
   def startFast(now: Int) =
     use('F') match {
       case None => this
-      case Some(inv) => copy(fastUntil = now + 50, inventory = inv).expire(now + 1)
+      case Some(inv) => copy(fastUntil = now + 51, inventory = inv).expire(now + 1)
     }
 
   def attachArm(x: Int, y: Int) =
@@ -338,7 +357,7 @@ object ProblemParser extends RegexParsers {
   def num: Parser[Int] = """\d+""".r ^^ { _.toInt }
   def point: Parser[Point] = ("(" ~> num <~ ",") ~ num <~ ")" ^^ { case x ~ y => Point(x, y) }
   def map = rep1sep(point, ",")
-  def code: Parser[Char] = """B|F|L|X|R""".r ^^ { _.head }
+  def code: Parser[Char] = """B|F|L|X|R|C""".r ^^ { _.head }
   def booster = code ~ point ^^ { case c ~ p => Booster(c, p) }
   def obstacles = repsep(map, ";")
   def boosters = repsep(booster, ";")
