@@ -60,6 +60,10 @@ object Entry {
         // val next = Seq(work(work.mine.moveToUnpainted(work.pos)))
         closed ++= next.map(_.state)
         open.pushAll(next)
+        if (next.isEmpty) {
+          // println(work.mine)
+          // println(s"bot at ${work.mine.toPoint(work.pos)}")
+        }
       }
     }
   }
@@ -164,27 +168,72 @@ case class Path(state: State, from: Option[(Action, Path)]) {
     }
   }
 */
+
+  val moveOrder = Seq(MoveLeft, MoveUp, MoveRight, MoveDown)
   def children: Seq[Path] = {
     (
       (for {
-        m <- Seq(MoveLeft, MoveUp, MoveRight, MoveDown)
+        m <- moveOrder
         if mine.grabbable(pos + mine.toOffset(m.offset))
       } yield m) ++
       (if (bot.inventory.getOrElse('B', 0) > 0) Seq(AttachArm(bot)) else Seq.empty[Action]) ++
       (if (bot.fastUntil == 0 && bot.inventory.getOrElse('F', 0) > 0) Seq(GoFast) else Seq.empty[Action]) ++
-      Seq(mine.moveToUnpainted(pos))
+      followWall(mine.moveToUnpainted(pos))
     ).distinct.map(apply).reverse
+  }
+
+  def followWall(act: Action): Seq[Action] = act match {
+    case move: Move =>
+//       println(s"checking $move")
+// val result = {
+      val left = move.rotateCCW
+      val right = move.rotateCW
+      val dusting = bot.arms(2) == left.offset
+      if (dusting) {
+        val reach = pos +: bot.arms.drop(2).map(mine.toOffset(_) + pos).takeWhile(mine.canMoveTo)
+        val next = reach.last + mine.toOffset(left.offset)
+        if (mine.unpainted(next)) Seq(left, move)
+        else if (mine.canMoveTo(pos + mine.toOffset(right.offset))) {
+          val folded = reach.length < bot.arms.length - 2
+          val reach2 = (pos + mine.toOffset(move.offset)) +: bot.arms.drop(2).map(x => mine.toOffset(x + move.offset) + pos).takeWhile(mine.canMoveTo)
+          val folded2 = reach2.length < bot.arms.length - 1
+          val reach3 = (pos + mine.toOffset(move.offset + move.offset)) +: bot.arms.drop(2).map(x => mine.toOffset(x + move.offset + move.offset) + pos).takeWhile(mine.canMoveTo)
+          val folded3 = reach3.length < bot.arms.length - 1
+          if (folded && folded2 && folded3 && mine.unpainted(reach2.last)) Seq(right, move)
+          else Seq(move)
+        } else Seq(move)
+      } else if (bot.arms(2) == move.offset) {
+        if (mine.canMoveTo(pos + mine.toOffset(left.offset)) && mine.unpainted(pos + mine.toOffset(left.offset + left.offset + move.offset))) Seq(left, move)
+        else if (mine.canMoveTo(pos + mine.toOffset(right.offset)) &&
+                 !mine.canMoveTo(pos + mine.toOffset(left.offset + move.offset + move.offset)) &&
+                 !mine.unpainted(pos + mine.toOffset(left.offset + move.offset + move.offset + move.offset))) Seq(right, move)
+        else Seq(move)
+      } else if (bot.arms(2) != right.offset) {
+        if (mine.canMoveTo(pos + mine.toOffset(left.offset)) && mine.unpainted(pos + mine.toOffset(left.offset + left.offset - move.offset))) Seq(left, move)
+        else if (mine.canMoveTo(pos + mine.toOffset(right.offset)) &&
+                 !mine.canMoveTo(pos + mine.toOffset(left.offset)) &&
+                 !mine.unpainted(pos + mine.toOffset(left.offset + move.offset))) Seq(right, move)
+        else Seq(move)
+      } else Seq(move)
+// }; println(s"  yielding $result"); result
+    case _ => Seq(act)
+  }
+
+  def checkWall(from: Int, offset: Int) = {
+    mine.canMoveTo((1 to 1000).view.map(from + _ * offset).dropWhile(mine.painted).head)
   }
 }
 
 sealed trait Action
 sealed trait Move extends Action {
   def offset: Point
+  def rotateCW: Move
+  def rotateCCW: Move
 }
-object MoveUp                        extends Move   { override def toString = "W"; def offset = Point( 0,  1) }
-object MoveDown                      extends Move   { override def toString = "S"; def offset = Point( 0, -1) }
-object MoveRight                     extends Move   { override def toString = "D"; def offset = Point( 1,  0) }
-object MoveLeft                      extends Move   { override def toString = "A"; def offset = Point(-1,  0) }
+object MoveUp                        extends Move   { override def toString = "W"; def offset = Point( 0,  1); def rotateCW = MoveRight; def rotateCCW = MoveLeft  }
+object MoveDown                      extends Move   { override def toString = "S"; def offset = Point( 0, -1); def rotateCW = MoveLeft;  def rotateCCW = MoveRight }
+object MoveRight                     extends Move   { override def toString = "D"; def offset = Point( 1,  0); def rotateCW = MoveDown;  def rotateCCW = MoveUp    }
+object MoveLeft                      extends Move   { override def toString = "A"; def offset = Point(-1,  0); def rotateCW = MoveUp;    def rotateCCW = MoveDown  }
 object Wait                          extends Action { override def toString = "Z" }
 object RotateCW                      extends Action { override def toString = "E" }
 object RotateCCW                     extends Action { override def toString = "Q" }
@@ -212,9 +261,12 @@ ${cells.grouped(width).map(_.mkString).toVector.reverse.mkString("\n")}
 
   def toPos(p: Point) = (p.y - startY) * width + p.x - startX
   def toOffset(p: Point) = (p.y) * width + p.x
+  def toPoint(p: Int) = Point(p % width + startX, p / width + startY)
   def paint(where: Point, bot: Bot): Mine = paint(toPos(where), bot)
   def paint(where: Int, bot: Bot): Mine = {
-    val reachable = where +: bot.arms.map(toOffset(_) + where).takeWhile(canMoveTo)
+    val fixed = where +: bot.arms.take(2).map(toOffset(_) + where).filter(canMoveTo)
+    val springing = bot.arms.drop(2).map(toOffset(_) + where).takeWhile(canMoveTo)
+    val reachable = fixed ++ springing
     if (reachable.exists(unpainted))
       copy(cells = reachable.foldLeft(cells)((c, o) =>
         c.updated(o, c(o) match {
@@ -224,10 +276,18 @@ ${cells.grouped(width).map(_.mkString).toVector.reverse.mkString("\n")}
       ))
     else this
   }
+  def countToPaint(where: Int, bot: Bot): Int = {
+    val reachable = where +: bot.arms.map(toOffset(_) + where).takeWhile(canMoveTo)
+    reachable.count(unpainted)
+  }
 
   def finished = !cells.exists(c => c == '.' || c.isUpper)
 
   def apply(pos: Int) = if (pos < 0 || pos >= cells.length) '!' else cells(pos)
+  def painted(pos: Int) = {
+    val d = apply(pos)
+    d == '*' || d.isLower
+  }
   def unpainted(pos: Int) = {
     val d = apply(pos)
     d == '.' || d.isUpper
@@ -374,6 +434,9 @@ case class Point(x: Int, y: Int) {
   override def toString = s"($x,$y)"
   def rotateCW = Point(y, -x)
   def rotateCCW = Point(-y, x)
+  def + (that: Point) = Point(this.x + that.x, this.y + that.y)
+  def - (that: Point) = Point(this.x - that.x, this.y - that.y)
+  def * (n: Int) = Point(x * n, y * n)
 }
 case class Booster(code: Char, where: Point) {
   override def toString = s"$code$where"
