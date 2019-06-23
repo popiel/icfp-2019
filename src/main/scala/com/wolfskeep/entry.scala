@@ -143,7 +143,7 @@ case class Path(state: State, from: Option[(Action, Path)], timeSinceChange: Int
         while (where.timeSinceChange > 0 && !where.from.get._1.isInstanceOf[Shift]) where = where.from.get._2
         if (where.from.get._1.isInstanceOf[Shift]) Path(s, Some(action, this))
         else {
-          println(s"On the way to ${mine.toPoint(s.pos)} with time $timeSinceChange > ${mine.portCost(s.pos)._1}")
+          // println(s"On the way to ${mine.toPoint(s.pos)} with time $timeSinceChange > ${mine.portCost(s.pos)._1}")
           where(mine.portCost(s.pos)._2)
         }
       } else Path(s, Some(action, this))
@@ -152,7 +152,7 @@ case class Path(state: State, from: Option[(Action, Path)], timeSinceChange: Int
       case Some(b) => Path(state.copy(bot = b.expire(time + 1), mine = mine.plant(pos)), Some(action, this))
     }
     case Shift(x, y) =>
-      println(s"Shifting to ($x,$y)")
+      // println(s"Shifting to ($x,$y)")
       val p2 = mine.toPos(Point(x, y))
       if (p2 == pos || mine.cells(p2) != 't') this
       else Path(state.copy(bot = bot.expire(time + 1), pos = p2, mine = mine.paint(p2, bot)), Some(action, this))
