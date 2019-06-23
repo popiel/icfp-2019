@@ -11,3 +11,5 @@ key
 /project/build.properties
 solutions.zip
 /problems/*.sol
+lambda.conf
+/lambda-client

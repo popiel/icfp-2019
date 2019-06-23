@@ -190,7 +190,8 @@ case class Path(state: State, from: Option[(Action, Path)]) {
       val right = move.rotateCW
       val dusting = bot.arms(2) == left.offset
       if (dusting) {
-        val reach = pos +: bot.arms.drop(2).map(mine.toOffset(_) + pos).takeWhile(mine.canMoveTo)
+        (if (bot.arms.length == 3) Seq(RotateCW) else Seq.empty[Action]) ++
+        {val reach = pos +: bot.arms.drop(2).map(mine.toOffset(_) + pos).takeWhile(mine.canMoveTo)
         val next = reach.last + mine.toOffset(left.offset)
         if (mine.unpainted(next)) Seq(left, move)
         else if (mine.canMoveTo(pos + mine.toOffset(right.offset))) {
@@ -201,19 +202,21 @@ case class Path(state: State, from: Option[(Action, Path)]) {
           val folded3 = reach3.length < bot.arms.length - 1
           if (folded && folded2 && folded3 && mine.unpainted(reach2.last)) Seq(right, move)
           else Seq(move)
-        } else Seq(move)
+        } else Seq(move)}
       } else if (bot.arms(2) == move.offset) {
-        if (mine.canMoveTo(pos + mine.toOffset(left.offset)) && mine.unpainted(pos + mine.toOffset(left.offset + left.offset + move.offset))) Seq(left, move)
+        (if (bot.arms.length > 3) Seq(RotateCCW) else Seq.empty[Action]) ++
+        (if (mine.canMoveTo(pos + mine.toOffset(left.offset)) && mine.unpainted(pos + mine.toOffset(left.offset + left.offset + move.offset))) Seq(left, move)
         else if (mine.canMoveTo(pos + mine.toOffset(right.offset)) &&
                  !mine.canMoveTo(pos + mine.toOffset(left.offset + move.offset + move.offset)) &&
                  !mine.unpainted(pos + mine.toOffset(left.offset + move.offset + move.offset + move.offset))) Seq(right, move)
-        else Seq(move)
+        else Seq(move))
       } else if (bot.arms(2) != right.offset) {
-        if (mine.canMoveTo(pos + mine.toOffset(left.offset)) && mine.unpainted(pos + mine.toOffset(left.offset + left.offset - move.offset))) Seq(left, move)
+        (if (bot.arms.length > 3) Seq(RotateCW) else Seq.empty[Action]) ++
+        (if (mine.canMoveTo(pos + mine.toOffset(left.offset)) && mine.unpainted(pos + mine.toOffset(left.offset + left.offset - move.offset))) Seq(left, move)
         else if (mine.canMoveTo(pos + mine.toOffset(right.offset)) &&
                  !mine.canMoveTo(pos + mine.toOffset(left.offset)) &&
                  !mine.unpainted(pos + mine.toOffset(left.offset + move.offset))) Seq(right, move)
-        else Seq(move)
+        else Seq(move))
       } else Seq(move)
 // }; println(s"  yielding $result"); result
     case _ => Seq(act)
