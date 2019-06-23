@@ -31,7 +31,7 @@ object Entry {
 
     var solutions = List.empty[Path]
     val open = scala.collection.mutable.Stack(Path(state, None))
-    var closed = Set(state)
+    var closed = Map(state -> 0).withDefaultValue(Int.MaxValue)
     while (open.nonEmpty) {
       val work = open.pop()
       if (work.finished) {
@@ -39,9 +39,8 @@ object Entry {
         open.clear()
         if (work.bot.inventory.getOrElse('R', 0) > 0) open.pushAll(work.installTeleporter)
       } else {
-        val next = work.children.filter(p => !closed(p.state))
-        // val next = Seq(work(work.mine.moveToUnpainted(work.pos)))
-        closed ++= next.map(_.state)
+        val next = work.children.filter(p => closed(p.state) > p.toList.length)
+        closed ++= next.map(p => p.state -> p.toList.length)
         open.pushAll(next)
         if (next.isEmpty) {
           // println(work.mine)
@@ -106,7 +105,10 @@ object Path {
   @tailrec private[Path] def toListAcc(p: Path, acc: List[Path]): List[Path] = if (p.from == None) p :: acc else toListAcc(p.from.get._2, p :: acc)
 }
 case class Path(state: State, from: Option[(Action, Path)], timeSinceChange: Int) {
-  def toList: List[Path] = Path.toListAcc(this, Nil)
+  val toList: List[Path] = from match {
+    case None => List(this)
+    case Some((_, prior)) => this :: prior.toList
+  }
 
   lazy val repr: String = {
     val sb = new StringBuilder()
@@ -117,7 +119,7 @@ case class Path(state: State, from: Option[(Action, Path)], timeSinceChange: Int
     }
     sb.toString.reverse
   }
-  override def toString = repr
+  override def toString = toList.reverse.tail.view.map(_.from.get._1.toString).mkString
 
   def bot = state.bot
   def pos = state.pos
@@ -206,8 +208,32 @@ case class Path(state: State, from: Option[(Action, Path)], timeSinceChange: Int
       } yield m) ++
       (if (bot.inventory.getOrElse('B', 0) > 0) Seq(AttachArm(bot)) else Seq.empty[Action]) ++
       (if (bot.fastUntil == 0 && bot.inventory.getOrElse('F', 0) > 0) Seq(GoFast) else Seq.empty[Action]) ++
-      followWall(mine.moveToUnpainted(pos))
+      // followWall(mine.moveToUnpainted(pos, bot))
+      hugWall
     ).distinct.map(apply).reverse
+  }
+
+  def hugWall: Seq[Action] = {
+    val dirToBrush = Seq(MoveLeft, MoveUp, MoveRight, MoveDown).find(_.offset == bot.arms(2)).get
+    if (bot.arms.length >= 3) {
+      val dirToWall = dirToBrush
+      val tip = mine.reachable(pos, bot).last
+      val folded = tip != pos + mine.toOffset(bot.arms.last)
+      if (mine.unpainted(tip + mine.toOffset(dirToWall))) {
+        if (!mine.canMoveTo(pos + mine.toOffset(dirToWall.rotateCCW))) Seq(RotateCCW, dirToWall)
+        else Seq(dirToWall)
+      } else {
+        val moveForw = dirToWall.rotateCW
+        val moveAway = moveForw.rotateCW
+        val forw = pos + mine.toOffset(moveForw)
+        
+        if (mine.canMoveTo(forw)) {
+          if (folded && mine.canMoveTo(pos + mine.toOffset(moveAway)) && !mine.reachable(forw, bot).contains(tip + mine.toOffset(dirToWall.offset + moveForw.offset))) Seq(moveAway, moveForw)
+          else if (mine.countToPaint(forw, bot) > 0) Seq(moveForw)
+          else Seq(mine.moveToUnpainted(pos, bot))
+        } else Seq(RotateCW, mine.moveToUnpainted(pos, bot))
+      }
+    } else Seq(mine.moveToUnpainted(pos, bot))
   }
 
   def followWall(act: Action): Seq[Action] = act match {
@@ -259,7 +285,7 @@ case class Path(state: State, from: Option[(Action, Path)], timeSinceChange: Int
   def dist(where: Point) = (mine.toPoint(pos) - where).magnitude
 
   def installTeleporter: Option[Path] = {
-    val candidates = toList.reverse.takeWhile(_.bot.inventory.getOrElse('R', 0) > 0).reverse
+    val candidates = toList.takeWhile(_.bot.inventory.getOrElse('R', 0) > 0).reverse
     val tardy = candidates.maxBy(_.timeSinceChange)
     val droppers = candidates.takeWhile(_ ne tardy)
     val where = mine.toPoint(tardy.pos)
@@ -310,13 +336,17 @@ ${cells.grouped(width).map(_.mkString).toVector.reverse.mkString("\n")}
   def toPos(p: Point) = (p.y - startY) * width + p.x - startX
   def toOffset(p: Point) = (p.y) * width + p.x
   def toPoint(p: Int) = Point(p % width + startX, p / width + startY)
-  def paint(where: Point, bot: Bot): Mine = paint(toPos(where), bot)
-  def paint(where: Int, bot: Bot): Mine = {
+
+  def reachable(where: Int, bot: Bot): Seq[Int] = {
     val fixed = where +: bot.arms.take(2).map(toOffset(_) + where).filter(canMoveTo)
     val springing = bot.arms.drop(2).map(toOffset(_) + where).takeWhile(canMoveTo)
-    val reachable = fixed ++ springing
-    if (reachable.exists(unpainted))
-      copy(cells = reachable.foldLeft(cells)((c, o) =>
+    fixed ++ springing
+  }
+  def paint(where: Point, bot: Bot): Mine = paint(toPos(where), bot)
+  def paint(where: Int, bot: Bot): Mine = {
+    val reach = reachable(where, bot)
+    if (reach.exists(unpainted))
+      copy(cells = reach.foldLeft(cells)((c, o) =>
         c.updated(o, c(o) match {
           case '.' => '*'
           case x => x.toLower
@@ -325,8 +355,7 @@ ${cells.grouped(width).map(_.mkString).toVector.reverse.mkString("\n")}
     else this
   }
   def countToPaint(where: Int, bot: Bot): Int = {
-    val reachable = where +: bot.arms.map(toOffset(_) + where).takeWhile(canMoveTo)
-    reachable.count(unpainted)
+    if (canMoveTo(where)) reachable(where, bot).count(unpainted) else 0
   }
 
   def finished = !cells.exists(c => c == '.' || c.isUpper)
@@ -376,11 +405,14 @@ ${cells.grouped(width).map(_.mkString).toVector.reverse.mkString("\n")}
 
   lazy val routeToUnpainted = findRoutes()
 
-  def moveToUnpainted(pos: Int): Action = {
-    if (unpainted(pos-1))     return MoveLeft
-    if (unpainted(pos+width)) return MoveUp
-    if (unpainted(pos+1))     return MoveRight
-    if (unpainted(pos-width)) return MoveDown
+  def moveToUnpainted(pos: Int, bot: Bot): Action = {
+    Seq(MoveLeft, MoveUp, MoveRight, MoveDown).find { m =>
+      val p2 = pos + toOffset(m.offset)
+      unpainted(p2) || countToPaint(p2, bot) > 0
+    } match {
+      case Some(m) => return m
+      case _ =>
+    }
 
     val cost = scala.collection.mutable.Map[Int, Int]().withDefaultValue(Int.MaxValue)
     val open = scala.collection.mutable.Queue[Int]()
@@ -396,12 +428,14 @@ ${cells.grouped(width).map(_.mkString).toVector.reverse.mkString("\n")}
       val p = open.dequeue()
       for (o <- Seq(-width, -1, 1, width)) {
         val p2 = p + o
-        if (unpainted(p2)) {
-          return Seq(MoveLeft, MoveUp, MoveRight, MoveDown)(cost(p) & 3)
-        }
-        if (canMoveTo(p2) && cost(p2) > cost(p) + 4) {
-          cost(p2) = cost(p) + 4
-          open.enqueue(p2)
+        if (canMoveTo(p2)) {
+          if (countToPaint(p2, bot) > 0) {
+            return Seq(MoveLeft, MoveUp, MoveRight, MoveDown)(cost(p) & 3)
+          }
+          if (cost(p2) > cost(p) + 4) {
+            cost(p2) = cost(p) + 4
+            open.enqueue(p2)
+          }
         }
       }
     }
@@ -501,6 +535,9 @@ case class Bot(arms: Seq[Point] = Seq(Point(1, 1), Point(1, -1), Point(1, 0)), f
   def plant = use('R').map(inv => copy(inventory = inv))
 }
 
+object Point {
+  implicit def fromMove(m: Move): Point = m.offset
+}
 case class Point(x: Int, y: Int) {
   override def toString = s"($x,$y)"
   def rotateCW = Point(y, -x)
