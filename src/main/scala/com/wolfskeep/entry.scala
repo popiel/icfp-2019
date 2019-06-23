@@ -1,5 +1,6 @@
 package com.wolfskeep
 
+import scala.annotation.tailrec
 import scala.collection.immutable.Vector
 import scala.util.parsing.combinator._
 import scala.util.Try
@@ -28,33 +29,15 @@ object Entry {
     // println(state.mine)
     println(s"${name.getOrElse("")} - (${mine.width},${mine.height}) - ${problem.start}")
 
+    var solutions = List.empty[Path]
     val open = scala.collection.mutable.Stack(Path(state, None))
     var closed = Set(state)
     while (open.nonEmpty) {
       val work = open.pop()
       if (work.finished) {
-        val out = name.map(n => new java.io.PrintStream(n.replace(".desc", ".sol"))).getOrElse(System.out)
-        out.println(work)
-        out.close()
-        // println(work.mine)
-        name match {
-          case Some(n) =>
-            val sName = n.replace(".desc", ".sol").replace("problems", "solutions")
-            val best = Try(scala.io.Source.fromFile(sName).getLines.mkString).getOrElse("").filter(_.isLetter).length
-            val cost = work.toString.filter(_.isLetter).length
-            if (best == 0 || best > cost) {
-              println(s"$n: Improving from $best to $cost")
-              Try {
-                val f = new java.io.PrintStream(sName);
-                f.println(work)
-                f.close()
-              }
-            } else {
-              println(s"$n: Prior $best remains better than $cost")
-            }
-          case _ =>
-        }
+        solutions = work +: solutions
         open.clear()
+        if (work.bot.inventory.getOrElse('R', 0) > 0) open.pushAll(work.installTeleporter)
       } else {
         val next = work.children.filter(p => !closed(p.state))
         // val next = Seq(work(work.mine.moveToUnpainted(work.pos)))
@@ -64,6 +47,31 @@ object Entry {
           // println(work.mine)
           // println(s"bot at ${work.mine.toPoint(work.pos)}")
         }
+      }
+    }
+
+    if (solutions.nonEmpty) {
+      val work = solutions.sortBy(_.toString.count(_.isLetter)).head
+      val out = name.map(n => new java.io.PrintStream(n.replace(".desc", ".sol"))).getOrElse(System.out)
+      out.println(work)
+      out.close()
+      // println(work.mine)
+      name match {
+        case Some(n) =>
+          val sName = n.replace(".desc", ".sol").replace("problems", "solutions")
+          val best = Try(scala.io.Source.fromFile(sName).getLines.mkString).getOrElse("").filter(_.isLetter).length
+          val cost = work.toString.filter(_.isLetter).length
+          if (best == 0 || best > cost) {
+            println(s"$n: Improving from $best to $cost")
+            Try {
+              val f = new java.io.PrintStream(sName);
+              f.println(work)
+              f.close()
+            }
+          } else {
+            println(s"$n: Prior $best remains better than $cost")
+          }
+        case _ =>
       }
     }
   }
@@ -88,7 +96,18 @@ case class State(pos: Int, bot: Bot, mine: Mine) {
   }
 }
 
-case class Path(state: State, from: Option[(Action, Path)]) {
+object Path {
+  def apply(state: State, from: Option[(Action, Path)]): Path = {
+    from match {
+      case None => Path(state, from, 0)
+      case Some((_, Path(prior, _, n))) => Path(state, from, (if (state.mine eq prior.mine) n + 1 else 0))
+    }
+  }
+  @tailrec private[Path] def toListAcc(p: Path, acc: List[Path]): List[Path] = if (p.from == None) p :: acc else toListAcc(p.from.get._2, p :: acc)
+}
+case class Path(state: State, from: Option[(Action, Path)], timeSinceChange: Int) {
+  def toList: List[Path] = Path.toListAcc(this, Nil)
+
   lazy val repr: String = {
     val sb = new StringBuilder()
     var p = this
@@ -119,12 +138,21 @@ case class Path(state: State, from: Option[(Action, Path)]) {
     case x: Move =>
       val offset = mine.toOffset(x.offset)
       val s = if (bot.fastUntil != 0) state.move(offset).move(offset).expire(time + 1) else state.move(offset).expire(time + 1)
-      Path(s, Some(action, this))
+      if ((s.mine eq mine) && mine.portCost(s.pos)._1 < timeSinceChange) {
+        var where = this
+        while (where.timeSinceChange > 0 && !where.from.get._1.isInstanceOf[Shift]) where = where.from.get._2
+        if (where.from.get._1.isInstanceOf[Shift]) Path(s, Some(action, this))
+        else {
+          println(s"On the way to ${mine.toPoint(s.pos)} with time $timeSinceChange > ${mine.portCost(s.pos)._1}")
+          where(mine.portCost(s.pos)._2)
+        }
+      } else Path(s, Some(action, this))
     case Reset => bot.plant match {
       case None => this
-      case Some(b) => Path(state.copy(bot = b.expire(time + 1), mine = mine.updated(pos, 't')), Some(action, this))
+      case Some(b) => Path(state.copy(bot = b.expire(time + 1), mine = mine.plant(pos)), Some(action, this))
     }
     case Shift(x, y) =>
+      println(s"Shifting to ($x,$y)")
       val p2 = mine.toPos(Point(x, y))
       if (p2 == pos || mine.cells(p2) != 't') this
       else Path(state.copy(bot = bot.expire(time + 1), pos = p2, mine = mine.paint(p2, bot)), Some(action, this))
@@ -183,6 +211,7 @@ case class Path(state: State, from: Option[(Action, Path)]) {
   }
 
   def followWall(act: Action): Seq[Action] = act match {
+/*
     case move: Move =>
 //       println(s"checking $move")
 // val result = {
@@ -190,7 +219,7 @@ case class Path(state: State, from: Option[(Action, Path)]) {
       val right = move.rotateCW
       val dusting = bot.arms(2) == left.offset
       if (dusting) {
-        (if (bot.arms.length == 3) Seq(RotateCW) else Seq.empty[Action]) ++
+        // (if (bot.arms.length == 3) Seq(RotateCW) else Seq.empty[Action]) ++
         {val reach = pos +: bot.arms.drop(2).map(mine.toOffset(_) + pos).takeWhile(mine.canMoveTo)
         val next = reach.last + mine.toOffset(left.offset)
         if (mine.unpainted(next)) Seq(left, move)
@@ -204,14 +233,14 @@ case class Path(state: State, from: Option[(Action, Path)]) {
           else Seq(move)
         } else Seq(move)}
       } else if (bot.arms(2) == move.offset) {
-        (if (bot.arms.length > 3) Seq(RotateCCW) else Seq.empty[Action]) ++
+        // (if (bot.arms.length > 3) Seq(RotateCCW) else Seq.empty[Action]) ++
         (if (mine.canMoveTo(pos + mine.toOffset(left.offset)) && mine.unpainted(pos + mine.toOffset(left.offset + left.offset + move.offset))) Seq(left, move)
         else if (mine.canMoveTo(pos + mine.toOffset(right.offset)) &&
                  !mine.canMoveTo(pos + mine.toOffset(left.offset + move.offset + move.offset)) &&
                  !mine.unpainted(pos + mine.toOffset(left.offset + move.offset + move.offset + move.offset))) Seq(right, move)
         else Seq(move))
       } else if (bot.arms(2) != right.offset) {
-        (if (bot.arms.length > 3) Seq(RotateCW) else Seq.empty[Action]) ++
+        // (if (bot.arms.length > 3) Seq(RotateCW) else Seq.empty[Action]) ++
         (if (mine.canMoveTo(pos + mine.toOffset(left.offset)) && mine.unpainted(pos + mine.toOffset(left.offset + left.offset - move.offset))) Seq(left, move)
         else if (mine.canMoveTo(pos + mine.toOffset(right.offset)) &&
                  !mine.canMoveTo(pos + mine.toOffset(left.offset)) &&
@@ -219,11 +248,27 @@ case class Path(state: State, from: Option[(Action, Path)]) {
         else Seq(move))
       } else Seq(move)
 // }; println(s"  yielding $result"); result
+*/
     case _ => Seq(act)
   }
 
   def checkWall(from: Int, offset: Int) = {
     mine.canMoveTo((1 to 1000).view.map(from + _ * offset).dropWhile(mine.painted).head)
+  }
+
+  def dist(where: Point) = (mine.toPoint(pos) - where).magnitude
+
+  def installTeleporter: Option[Path] = {
+    val candidates = toList.reverse.takeWhile(_.bot.inventory.getOrElse('R', 0) > 0).reverse
+    val tardy = candidates.maxBy(_.timeSinceChange)
+    val droppers = candidates.takeWhile(_ ne tardy)
+    val where = mine.toPoint(tardy.pos)
+    val here = droppers.minBy(_.dist(where))
+    val savings = tardy.timeSinceChange - here.dist(where) - 1
+    if (savings > 0) {
+      println(s"Planting at ${mine.toPoint(here.pos)} to save $savings while moving to $where")
+      Some(here(Reset))
+    } else None
   }
 }
 
@@ -254,7 +299,7 @@ object AttachArm {
   }
 }
 
-case class Mine(startX: Int, startY: Int, width: Int, height: Int, cells: IndexedSeq[Char]) {
+case class Mine(startX: Int, startY: Int, width: Int, height: Int, cells: IndexedSeq[Char], portCost: Array[(Int, Shift)]) {
   override def toString = {
     val o = s"(${startX + width},${startY + height})"
     s"""${" "*(width - o.length max 0)}$o
@@ -362,6 +407,29 @@ ${cells.grouped(width).map(_.mkString).toVector.reverse.mkString("\n")}
     }
     return Wait
   }
+
+  def plant(pos: Int): Mine = {
+    val where = toPoint(pos)
+    val shift = Shift(where.x, where.y)
+    val cost = portCost.clone()
+    cost(pos) = (0, shift)
+    var progressing = true
+    while (progressing) {
+      progressing = false
+      for {
+        p1 <- (0 until cells.length) ++ (cells.length - 1 to 0 by -1)
+        if canMoveTo(p1)
+        o <- Seq(-width, -1, 1, width)
+        p2 = p1 + o
+        if p2 >= 0 && p2 < cells.length
+        if cost(p1)._1 - 1 > cost(p2)._1
+      } {
+        cost(p1) = (cost(p2)._1 + 1, shift)
+        progressing = true
+      }
+    }
+    copy(portCost = cost).updated(pos, 't')
+  }
 }
 object Mine {
   def isVert(p: Seq[Point]) = p(0).x == p(1).x
@@ -388,7 +456,7 @@ object Mine {
     val withBoosters = problem.boosters.foldLeft(cells)((c, b) =>
       c.updated((b.where.y - minY) * width + b.where.x - minX, b.code)
     )
-    Mine(minX, minY, width, height, withBoosters)
+    Mine(minX, minY, width, height, withBoosters, Array.fill(withBoosters.length)((Int.MaxValue, Shift(0,0))))
   }
 }
 
@@ -440,6 +508,7 @@ case class Point(x: Int, y: Int) {
   def + (that: Point) = Point(this.x + that.x, this.y + that.y)
   def - (that: Point) = Point(this.x - that.x, this.y - that.y)
   def * (n: Int) = Point(x * n, y * n)
+  def magnitude = x.abs + y.abs
 }
 case class Booster(code: Char, where: Point) {
   override def toString = s"$code$where"
