@@ -25,7 +25,8 @@ and could actually degrade performance
 
 ## Judging Feedback
 
-Well, this was a very good contest problem, but the implementation was flawed.
+Well, this was a very good contest problem, with very few clarifications needed.
+Unfortunately, there were two significant flaws in presentation:
 
 1. The contest was unusually time-zone specific this year.
    Having an update within 10 hours of the end of the lightning division
