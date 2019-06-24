@@ -76,7 +76,7 @@ object Entry {
   }
 }
 
-case class State(pos: Int, bot: Bot, mine: Mine) {
+case class State(pos: Int, bot: Bot, mine: Mine, wall: Option[Int] = None, dir: Move = MoveUp, noWalls: Boolean = false) {
   def expire(time: Int) = {
     val b2 = bot.expire(time)
     if (bot eq b2) this else copy(bot = b2)
@@ -90,8 +90,50 @@ case class State(pos: Int, bot: Bot, mine: Mine) {
       val isGrabbable = d.isLetter && d != 'X' && d != 'T'
       val m2 = if (d == '#' || isGrabbable) mine.updated(p1, '*') else mine
       val b2 = if (isGrabbable) bot.copy(inventory = bot.inventory.updated(d, bot.inventory.getOrElse(d, 0) + 1)) else bot
-      State(p1, b2, m2.paint(p1, b2))
+      copy(pos = p1, bot = b2, mine = m2.paint(p1, b2))
     }
+  }
+
+  def pickWall: State = {
+    if (wall != None || noWalls) return this
+    val cost = scala.collection.mutable.Map[Int, Int]().withDefaultValue(Int.MaxValue)
+    val open = scala.collection.mutable.Queue[Int]()
+    cost(pos) = 0;
+    open.enqueue(pos);
+    while (open.nonEmpty) {
+      val p = open.dequeue()
+      for (o <- Seq(MoveDown, MoveLeft, MoveUp, MoveRight)) {
+        val p2 = p + mine.toOffset(o.offset)
+        if (mine.unpainted(p) && !mine.canMoveTo(p2)) {
+          // println(s"Picking wall ${mine.toPoint(p2)} ${o.rotateCW.rotateCW}")
+          return copy(wall = Some(p2), dir = o.rotateCW.rotateCW)
+        }
+        if (mine.canMoveTo(p2)) {
+          if (cost(p2) > cost(p) + 1) {
+            cost(p2) = cost(p) + 1
+            open.enqueue(p2)
+          }
+        }
+      }
+    }
+    // println(s"No walls to pick")
+    return copy(noWalls = true)
+  }
+
+  def walkWall(n: Int = bot.arms.length * 3): State = {
+    if (n == 0) {
+      // println(s"Clearing wall")
+      return copy(wall = None)
+    }
+    if (wall == None) return pickWall
+    val w = wall.get
+    // println(s"Walking wall ${mine.toPoint(pos)} $n: ${mine.toPoint(w)} $dir")
+    if (mine.unpainted(w + mine.toOffset(dir.offset))) return this
+    val rightCorner = w + mine.toOffset(dir.offset + dir.rotateCCW.offset)
+    if (!mine.canMoveTo(rightCorner)) return copy(wall = Some(rightCorner), dir = dir.rotateCW).walkWall(n - 1)
+    val straight = w + mine.toOffset(dir.rotateCCW.offset)
+    if (!mine.canMoveTo(straight)) return copy(wall = Some(straight)).walkWall(n - 1)
+    return copy(dir = dir.rotateCCW).walkWall(n - 1)
   }
 }
 
@@ -138,6 +180,7 @@ case class Path(state: State, from: Option[(Action, Path)], timeSinceChange: Int
       val b = bot.attachArm(x, y)
       Path(state.copy(bot = b.expire(time + 1), mine = mine.paint(pos, b)), Some(action, this))
     case x: Move =>
+      // println(s"Moving ${mine.toPoint(pos)} $x")
       val offset = mine.toOffset(x.offset)
       val s = if (bot.fastUntil != 0) state.move(offset).move(offset).expire(time + 1) else state.move(offset).expire(time + 1)
       if ((s.mine eq mine) && mine.portCost(s.pos)._1 < timeSinceChange) {
@@ -201,6 +244,8 @@ case class Path(state: State, from: Option[(Action, Path)], timeSinceChange: Int
 
   val moveOrder = Seq(MoveLeft, MoveUp, MoveRight, MoveDown)
   def children: Seq[Path] = {
+    val s = state.walkWall()
+    val p = copy(state = s)
     (
       (for {
         m <- moveOrder
@@ -209,9 +254,62 @@ case class Path(state: State, from: Option[(Action, Path)], timeSinceChange: Int
       (if (bot.inventory.getOrElse('B', 0) > 0) Seq(AttachArm(bot)) else Seq.empty[Action]) ++
       (if (bot.fastUntil == 0 && bot.inventory.getOrElse('F', 0) > 0) Seq(GoFast) else Seq.empty[Action]) ++
       mine.moveToBooster(pos) ++
+      p.seekWall ++
       followWall(mine.moveToUnpainted(pos, bot))
       // hugWall
-    ).distinct.map(apply).reverse
+    ).distinct.map(p.apply).reverse
+  }
+
+  def seekWall: Option[Action] = {
+    if (state.wall == None) return None
+    val w = state.wall.get
+    if (bot.arms.length > 3) {
+      if (bot.arms(2) * -1 != state.dir.offset) {
+        if (bot.arms(2).rotateCW == state.dir.offset) {
+          if (mine.countToPaint(pos, bot.rotateCCW) > 0) return Some(RotateCCW)
+        } else if (bot.arms(2).rotateCCW == state.dir.offset) {
+          if (mine.countToPaint(pos, bot.rotateCW) > 0) return Some(RotateCW)
+        } else {
+          if (mine.countToPaint(pos, bot.rotateCCW) > 0) return Some(RotateCCW)
+          if (mine.countToPaint(pos, bot.rotateCW) > 0) return Some(RotateCW)
+          if (mine.countToPaint(pos, bot.rotateCW.rotateCW) > 0) return Some(RotateCW)
+        }
+      }
+    } else {
+      if (bot.arms(2).rotateCW != state.dir.offset) {
+        if (bot.arms(2) == state.dir.offset) {
+          if (mine.countToPaint(pos, bot.rotateCCW) > 0) return Some(RotateCCW)
+        } else if (bot.arms(2) * -1 == state.dir.offset) {
+          if (mine.countToPaint(pos, bot.rotateCW) > 0) return Some(RotateCW)
+        } else {
+          if (mine.countToPaint(pos, bot.rotateCCW) > 0) return Some(RotateCCW)
+          if (mine.countToPaint(pos, bot.rotateCW) > 0) return Some(RotateCW)
+          if (mine.countToPaint(pos, bot.rotateCW.rotateCW) > 0) return Some(RotateCW)
+        }
+      }
+    }
+    val tip = mine.reachable(pos, bot).last
+    val folded = tip != pos + mine.toOffset(bot.arms.last)
+    val p = w + mine.toOffset(state.dir)
+    val forwMove = state.dir.rotateCCW
+    val forwPos = pos + mine.toOffset(forwMove)
+    val forwPos2 = forwPos + mine.toOffset(forwMove)
+    val outMove = forwMove.rotateCW
+    val outPos = pos + mine.toOffset(outMove)
+    val outPos2 = outPos + mine.toOffset(forwMove)
+    val outPos3 = outPos2 + mine.toOffset(forwMove)
+    if (folded) {
+      // println(s"folded: p${mine.toPoint(p)} pos${mine.toPoint(pos)} forwMove $forwMove outMove $outMove reachable ${mine.reachable(outPos2, bot).map(mine.toPoint)}")
+    }
+    if (mine.canMoveTo(outPos) && mine.canMoveTo(outPos2)) {
+      if (mine.reachable(outPos2, bot).contains(p)) return Some(outMove)
+      if (mine.canMoveTo(outPos3) && mine.reachable(outPos3, bot).contains(p)) return Some(outMove)
+    }
+    if (mine.canMoveTo(forwPos)) {
+      if (p == mine.reachable(forwPos, bot).last) return Some(forwMove)
+      if (mine.canMoveTo(forwPos2) && mine.reachable(forwPos2, bot).contains(p)) return Some(forwMove)
+    }
+    return mine.moveToPos(pos, p, state.dir)
   }
 
   def hugWall: Seq[Action] = {
@@ -405,6 +503,37 @@ ${cells.grouped(width).map(_.mkString).toVector.reverse.mkString("\n")}
   }
 
   lazy val routeToUnpainted = findRoutes()
+
+  def moveToPos(pos: Int, target: Int, dir: Move): Option[Action] = {
+    val order = Seq(dir.rotateCCW, dir, dir.rotateCW, dir.rotateCW.rotateCW)
+
+    val cost = scala.collection.mutable.Map[Int, Int]().withDefaultValue(Int.MaxValue)
+    val open = scala.collection.mutable.Queue[Int]()
+    cost(pos) = 0;
+    for { (d, k) <- order.zipWithIndex } {
+      val p = pos + toOffset(d.offset)
+      if (canMoveTo(p)) {
+        cost(p) = 4 + k
+        open.enqueue(p)
+      }
+    }
+    while (open.nonEmpty) {
+      val p = open.dequeue()
+      for (o <- Seq(-width, -1, 1, width)) {
+        val p2 = p + o
+        if (canMoveTo(p2)) {
+          if (p2 == target) {
+            return Some(order(cost(p) & 3))
+          }
+          if (cost(p2) > cost(p) + 4) {
+            cost(p2) = cost(p) + 4
+            open.enqueue(p2)
+          }
+        }
+      }
+    }
+    return None
+  }
 
   def moveToBooster(pos: Int): Option[Move] = {
     if (numBoosters == 0) return None
