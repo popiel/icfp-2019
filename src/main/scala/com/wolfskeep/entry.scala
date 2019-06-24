@@ -293,21 +293,21 @@ case class Path(state: State, from: Option[(Action, Path)], timeSinceChange: Int
     val p = w + mine.toOffset(state.dir)
     val forwMove = state.dir.rotateCCW
     val forwPos = pos + mine.toOffset(forwMove)
-    val forwPos2 = forwPos + mine.toOffset(forwMove)
     val outMove = forwMove.rotateCW
     val outPos = pos + mine.toOffset(outMove)
     val outPos2 = outPos + mine.toOffset(forwMove)
-    val outPos3 = outPos2 + mine.toOffset(forwMove)
     if (folded) {
       // println(s"folded: p${mine.toPoint(p)} pos${mine.toPoint(pos)} forwMove $forwMove outMove $outMove reachable ${mine.reachable(outPos2, bot).map(mine.toPoint)}")
     }
     if (mine.canMoveTo(outPos) && mine.canMoveTo(outPos2)) {
       if (mine.reachable(outPos2, bot).contains(p)) return Some(outMove)
-      if (mine.canMoveTo(outPos3) && mine.reachable(outPos3, bot).contains(p)) return Some(outMove)
+      val outPos3 = outPos2 + mine.toOffset(forwMove)
+      // if (mine.canMoveTo(outPos3) && mine.reachable(outPos3, bot).contains(p)) return Some(outMove)
     }
     if (mine.canMoveTo(forwPos)) {
       if (p == mine.reachable(forwPos, bot).last) return Some(forwMove)
-      if (mine.canMoveTo(forwPos2) && mine.reachable(forwPos2, bot).contains(p)) return Some(forwMove)
+      val forwPos2 = forwPos + mine.toOffset(forwMove)
+      // if (mine.canMoveTo(forwPos2) && mine.reachable(forwPos2, bot).contains(p)) return Some(forwMove)
     }
     return mine.moveToPos(pos, p, state.dir)
   }
