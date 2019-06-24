@@ -208,8 +208,9 @@ case class Path(state: State, from: Option[(Action, Path)], timeSinceChange: Int
       } yield m) ++
       (if (bot.inventory.getOrElse('B', 0) > 0) Seq(AttachArm(bot)) else Seq.empty[Action]) ++
       (if (bot.fastUntil == 0 && bot.inventory.getOrElse('F', 0) > 0) Seq(GoFast) else Seq.empty[Action]) ++
-      // followWall(mine.moveToUnpainted(pos, bot))
-      hugWall
+      mine.moveToBooster(pos) ++
+      followWall(mine.moveToUnpainted(pos, bot))
+      // hugWall
     ).distinct.map(apply).reverse
   }
 
@@ -325,7 +326,7 @@ object AttachArm {
   }
 }
 
-case class Mine(startX: Int, startY: Int, width: Int, height: Int, cells: IndexedSeq[Char], portCost: Array[(Int, Shift)]) {
+case class Mine(startX: Int, startY: Int, width: Int, height: Int, cells: IndexedSeq[Char], portCost: Array[(Int, Shift)], numBoosters: Int) {
   override def toString = {
     val o = s"(${startX + width},${startY + height})"
     s"""${" "*(width - o.length max 0)}$o
@@ -378,7 +379,7 @@ ${cells.grouped(width).map(_.mkString).toVector.reverse.mkString("\n")}
     d.isLetter && d != 'X' && d != 'T'
   }
 
-  def updated(pos: Int, c: Char) = copy(cells = cells.updated(pos, c))
+  def updated(pos: Int, c: Char) = copy(cells = cells.updated(pos, c), numBoosters = if (c == '*' && cells(pos).isLetter) numBoosters - 1 else numBoosters)
 
   private[this] def findRoutes(): Array[Int] = {
     val cost = Array.fill(cells.length)(Int.MaxValue)
@@ -404,6 +405,45 @@ ${cells.grouped(width).map(_.mkString).toVector.reverse.mkString("\n")}
   }
 
   lazy val routeToUnpainted = findRoutes()
+
+  def moveToBooster(pos: Int): Option[Move] = {
+    if (numBoosters == 0) return None
+    Seq(MoveLeft, MoveUp, MoveRight, MoveDown).find { m =>
+      val p2 = pos + toOffset(m.offset)
+      grabbable(p2)
+    } match {
+      case Some(m) => return Some(m)
+      case _ =>
+    }
+
+    val cost = scala.collection.mutable.Map[Int, Int]().withDefaultValue(Int.MaxValue)
+    val open = scala.collection.mutable.Queue[Int]()
+    cost(pos) = 0;
+    for { (o, k) <- Seq(-1, width, 1, -width).zipWithIndex } {
+      val p = pos + o
+      if (canMoveTo(p)) {
+        cost(p) = 4 + k
+        open.enqueue(p)
+      }
+    }
+    while (open.nonEmpty) {
+      val p = open.dequeue()
+      if (cost(p) > 20) return None
+      for (o <- Seq(-width, -1, 1, width)) {
+        val p2 = p + o
+        if (canMoveTo(p2)) {
+          if (grabbable(p2)) {
+            return Some(Seq(MoveLeft, MoveUp, MoveRight, MoveDown)(cost(p) & 3))
+          }
+          if (cost(p2) > cost(p) + 4) {
+            cost(p2) = cost(p) + 4
+            open.enqueue(p2)
+          }
+        }
+      }
+    }
+    return None
+  }
 
   def moveToUnpainted(pos: Int, bot: Bot): Action = {
     Seq(MoveLeft, MoveUp, MoveRight, MoveDown).find { m =>
@@ -490,7 +530,7 @@ object Mine {
     val withBoosters = problem.boosters.foldLeft(cells)((c, b) =>
       c.updated((b.where.y - minY) * width + b.where.x - minX, b.code)
     )
-    Mine(minX, minY, width, height, withBoosters, Array.fill(withBoosters.length)((Int.MaxValue, Shift(0,0))))
+    Mine(minX, minY, width, height, withBoosters, Array.fill(withBoosters.length)((Int.MaxValue, Shift(0,0))), problem.boosters.count(_.code != 'X'))
   }
 }
 
